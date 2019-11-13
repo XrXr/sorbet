@@ -196,6 +196,8 @@ module T::Private::Methods
     end
 
     original_method = mod.instance_method(method_name)
+    # The newly added method is directly defined on `mod`. Loop to find it since `Module#instance_method`
+    # can return a method in defined on a prepended mixin.
     while !original_method.owner.equal?(mod)
       original_method = original_method.super_method
     end
@@ -208,7 +210,7 @@ module T::Private::Methods
     # This wrapper is very slow, so it will subsequently re-wrap with a much faster wrapper
     # (or unwrap back to the original method).
     new_method = nil
-    T::Private::ClassUtils.replace_method(mod, method_name, specific: true) do |*args, &blk|
+    T::Private::ClassUtils.replace_method_owner(original_method) do |*args, &blk|
       if !T::Private::Methods.has_sig_block_for_method(new_method)
         # This should only happen if the user used alias_method to grab a handle
         # to the original pre-unwound `sig` method. I guess we'll just proxy the

@@ -369,25 +369,25 @@ class Opus::Types::Test::EdgeCasesTest < Critic::Unit::UnitTest
         1
       end
 
-      sig { returns(Integer) }
-      def bad_return
-        "wrong"
-      end
-
       foo_mod = Module.new do
         def foo
           super
         end
       end
+      prepend(foo_mod)
 
       bar_mod = Module.new do
         def bad_return
           super
         end
       end
-
-      prepend(foo_mod)
       prepend(bar_mod)
+
+      sig { returns(Integer) }
+      def bad_return
+        "wrong"
+      end
+
     end
 
     obj = klass.new

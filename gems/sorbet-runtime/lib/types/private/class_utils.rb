@@ -69,32 +69,40 @@ module T::Private::ClassUtils
     end
   end
 
+  private_class_method def self.visibility_method_name_no_inherit(mod, name)
+    if mod.public_method_defined?(name, false)
+      :public
+    elsif mod.protected_method_defined?(name, false)
+      :protected
+    elsif mod.private_method_defined?(name, false)
+      :private
+    else
+      raise NameError.new("method `#{name}` is not directly defined on `#{mod}`")
+    end
+  end
+
   # Replaces a method, either by overwriting it (if it is defined directly on `mod`) or by
   # overriding it (if it is defined by one of mod's ancestors). Returns a ReplacedMethod instance
   # on which you can call `bind(...).call(...)` to call the original method, or `restore` to
   # restore the original method (by overwriting or removing the override).
-  def self.replace_method(mod, name, specific: false, &blk)
+  def self.replace_method(mod, name, &blk)
     original_method = mod.instance_method(name)
     original_visibility = visibility_method_name(mod, name)
     original_owner = original_method.owner
 
-    # The check below assumes that you want to replace the method that is first-in-line
-    # to be called, which is not always the case.
-    unless specific
-      mod.ancestors.each do |ancestor|
-        break if ancestor == mod
-        if ancestor == original_owner
-          # If we get here, that means the method we're trying to replace exists on a *prepended*
-          # mixin, which means in order to supersede it, we'd need to create a method on a new
-          # module that we'd prepend before `ancestor`. The problem with that approach is there'd
-          # be no way to remove that new module after prepending it, so we'd be left with these
-          # empty anonymous modules in the ancestor chain after calling `restore`.
-          #
-          # That's not necessarily a deal breaker, but for now, we're keeping it as unsupported.
-          raise "You're trying to replace `#{name}` on `#{mod}`, but that method exists in a " \
-                "prepended module (#{ancestor}), which we don't currently support. Talk to " \
-                "#dev-productivity for help."
-        end
+    mod.ancestors.each do |ancestor|
+      break if ancestor == mod
+      if ancestor == original_owner
+        # If we get here, that means the method we're trying to replace exists on a *prepended*
+        # mixin, which means in order to supersede it, we'd need to create a method on a new
+        # module that we'd prepend before `ancestor`. The problem with that approach is there'd
+        # be no way to remove that new module after prepending it, so we'd be left with these
+        # empty anonymous modules in the ancestor chain after calling `restore`.
+        #
+        # That's not necessarily a deal breaker, but for now, we're keeping it as unsupported.
+        raise "You're trying to replace `#{name}` on `#{mod}`, but that method exists in a " \
+              "prepended module (#{ancestor}), which we don't currently support. Talk to " \
+              "#dev-productivity for help."
       end
     end
 
@@ -108,5 +116,29 @@ module T::Private::ClassUtils
     new_method = mod.instance_method(name)
 
     ReplacedMethod.new(mod, original_method, new_method, overwritten, original_visibility)
+  end
+
+  # Replaces a method directly defined on `mod` by overwriting. Returns a ReplacedMethod instance.
+  # Note that if a prepended mixin of `mod` defines a method under `name`, a call to method `name`
+  # on an instance of `mod` would not dispatch to the method replaced.
+  def self.replace_method_owner(original_method, &blk)
+    mod = original_method.owner
+    method_name = original_method.name
+    original_owner = original_method.owner
+    original_visibility = visibility_method_name_no_inherit(mod, method_name)
+
+    T::Configuration.without_ruby_warnings do
+      T::Private::DeclState.current.without_on_method_added do
+        mod.send(:define_method, method_name, &blk) # rubocop:disable PrisonGuard/UsePublicSend
+      end
+    end
+
+    mod.send(original_visibility, method_name) # rubocop:disable PrisonGuard/UsePublicSend
+    new_method = mod.instance_method(method_name)
+    while !new_method.owner.equal?(mod)
+      new_method = new_method.super_method
+    end
+
+    ReplacedMethod.new(mod, original_method, new_method, true, original_visibility)
   end
 end
